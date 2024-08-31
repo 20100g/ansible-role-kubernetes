@@ -51,24 +51,53 @@
 
 # Set up control plane.
 - include_tasks: control-plane-setup.yml
-  when: kubernetes_role == 'control_plane'
+  when: 
+    - kubernetes_role == 'control_plane'
+    - kubernetes_is_first_control_plane
 
+- name: Init certificate for additional control planes
+  command: >
+    kubeadm init phase upload-certs --upload-certs
+  register: kubeadmin_init_phase_certs
+  check_mode: false
+  when: 
+    - kubernetes_role == 'control_plane'
+    - kubernetes_is_first_control_plane
+  
 # Set up nodes.
-- name: Get the kubeadm join command from the Kubernetes control plane.
+- name: Get the kubeadm join command for the worker nodes from the primary Kubernetes control plane.
   command: kubeadm token create --print-join-command
   changed_when: false
-  when: kubernetes_role == 'control_plane'
+  when:
+    - kubernetes_role == 'control_plane'
+    - kubernetes_is_first_control_plane
   register: kubernetes_join_command_result
+  check_mode: false
+
+- name: Get the kubeadm join command for additional control plane nodes from the primary Kubernetes control plane.
+  command: kubeadm token create --print-join-command --certificate-key {{ kubeadmin_init_phase_certs.stdout_lines[-1] }}
+  changed_when: false
+  when:
+    - kubernetes_role == 'control_plane'
+    - kubernetes_is_first_control_plane
+  register: kubernetes_join_control_plane_command_result
+  check_mode: false
 
 - name: Set the kubeadm join command globally.
   set_fact:
     kubernetes_join_command: >
-      {{ kubernetes_join_command_result.stdout }}
+      {{ kubernetes_join_control_plane_command_result.stdout  if ( hostvars[item]['kubernetes_role'] == 'control_plane' and not(hostvars[item]['kubernetes_is_first_control_plane'])) else kubernetes_join_command_result.stdout }}
       {{ kubernetes_join_command_extra_opts }}
   when: kubernetes_join_command_result.stdout is defined
   delegate_to: "{{ item }}"
   delegate_facts: true
   with_items: "{{ groups['all'] }}"
+  check_mode: false
 
 - include_tasks: node-setup.yml
-  when: kubernetes_role == 'node'
+  when: kubernetes_role == 'node' or not(kubernetes_is_first_control_plane)
+
+- include_tasks: secondary-control-plane-setup.yml
+  when: 
+    - kubernetes_role == 'control_plane'
+    - not(kubernetes_is_first_control_plane)
