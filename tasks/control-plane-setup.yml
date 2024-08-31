@@ -80,11 +80,11 @@
     state: directory
     mode: 0755
 
-- name: Symlink the kubectl admin.conf to ~/.kube/conf.
-  file:
+- name: Copy the kubectl admin.conf to ~/.kube/conf.
+  copy:
     src: /etc/kubernetes/admin.conf
+    remote_src: true
     dest: ~/.kube/config
-    state: link
     mode: 0644
 
 - name: Write Cilium Helm values to file
